@@ -185,6 +185,40 @@ class ChargesStream(StripeStream):
     replication_key = "created"
     schema_filepath = SCHEMAS_DIR / "charges.schema.json"
 
+    def get_records(self, context: Optional[dict]) -> Iterable[dict]:
+        """Return a generator of row-type dictionary objects.
+        
+        Overrides parent to expand payment_intent on charge objects.
+        """
+        stripe.api_key = self._config["api_key"]
+
+        for start, end in self._make_time_chunks(context):
+            self.logger.info(f"Fetching {self.name} from {pendulum.from_timestamp(start)} "
+                             f"to {pendulum.from_timestamp(end)}")
+            iterator = self._get_iterator(start, end)
+
+            for row in iterator.auto_paging_iter():
+                record = row.to_dict()
+                
+                # Expand payment_intent if present in the charge data
+                if record.get("data", {}).get("object", {}).get("payment_intent"):
+                    payment_intent_id = record["data"]["object"]["payment_intent"]
+                    # Only expand if it's a string ID (not already expanded)
+                    if isinstance(payment_intent_id, str):
+                        try:
+                            payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+                            record["data"]["object"]["payment_intent"] = payment_intent.to_dict()
+                        except Exception as e:
+                            self.logger.warning(
+                                f"Failed to expand payment_intent {payment_intent_id}: {e}"
+                            )
+                
+                yield record
+
+            self.finalize_state_progress_markers(
+                {"bookmarks": {self.name: {"replication_key_value": end}}}
+            )
+
 
 class CheckoutSessionsStream(StripeStream):
     """Stripe Checkout Sessions stream."""
