@@ -279,6 +279,7 @@ class PaymentIntentsStream(StripeStream):
     """Stripe Payment Intents stream"""
 
     name = "payment_intents"
+    is_immutable = True
     primary_keys = ["id"]
     replication_key = "created"
     schema_filepath = SCHEMAS_DIR / "payment-intents.schema.json"
