@@ -185,6 +185,14 @@ class ChargesStream(StripeStream):
     replication_key = "created"
     schema_filepath = SCHEMAS_DIR / "charges.schema.json"
 
+    def _get_iterator(
+        self, start_epoch: int, end_epoch: int, limit: int = 100
+    ):
+        params = self._make_params(start_epoch, end_epoch, limit=limit)
+        # Expand payment_intent to get full PaymentIntent object instead of just ID
+        params["expand"] = ["data.object.payment_intent"]
+        return self.sdk_object.list(**params)
+
 
 class CheckoutSessionsStream(StripeStream):
     """Stripe Checkout Sessions stream."""
