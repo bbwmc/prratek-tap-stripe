@@ -114,7 +114,19 @@
         "string"
       ]
     },
+    "payout": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
     "source": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "source_type": {
       "type": [
         "null",
         "string"

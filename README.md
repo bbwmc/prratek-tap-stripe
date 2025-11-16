@@ -33,6 +33,12 @@ tap-stripe --about
 
 You can easily run `tap-stripe` by itself or in a pipeline using [Meltano](www.meltano.com).
 
+### Linking Payouts, Transactions, and Destinations
+
+- The `payouts` stream now pulls payout objects directly from Stripe and automatically expands the `destination` object so you can see the underlying bank account or card details without extra requests.
+- The `balance_transactions` stream continues to ingest the global ledger, and now additionally retrieves the balance transactions associated with each payout (`payout=<id>`). Every emitted balance transaction includes the `payout` reference when it exists, enabling joins from `charges` → `balance_transactions` → `payouts` → destinations.
+- No extra configuration is required—ensure the tap has a sufficiently old `start_date` to cover the payouts and balance activity you need to reconcile.
+
 ### Executing the Tap Directly
 
 ```bash

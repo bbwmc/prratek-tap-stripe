@@ -1,7 +1,7 @@
 """Stream class for tap-stripe."""
 
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Set, Tuple
 
 import pendulum
 import stripe
@@ -13,6 +13,7 @@ from singer_sdk.streams.core import REPLICATION_FULL_TABLE, REPLICATION_INCREMEN
 # from stripe.api_resources.list_object import ListObject as StripeListObject
 
 SCHEMAS_DIR = Path(__file__).parent / Path("./schemas")
+DEFAULT_STRIPE_PAGE_LIMIT = 100
 
 SDK_OBJECTS = {
     "balance_transactions": stripe.BalanceTransaction,
@@ -177,6 +178,67 @@ class BalanceTransactionsStream(StripeStream):
     replication_key = "created"
     schema_filepath = SCHEMAS_DIR / "balance-transactions.schema.json"
 
+    def get_records(self, context: Optional[dict]) -> Iterable[dict]:
+        """Return balance transactions plus payout-linked transactions."""
+
+        seen_ids: Set[str] = set()
+        for record in super().get_records(context):
+            record_id = record.get("id")
+            if record_id:
+                seen_ids.add(record_id)
+            yield record
+
+        yield from self._yield_payout_balance_transactions(context, seen_ids)
+
+    def _yield_payout_balance_transactions(
+        self, context: Optional[dict], seen_ids: Set[str]
+    ) -> Iterable[dict]:
+        """Fetch balance transactions scoped to individual payouts."""
+
+        self.logger.info("Fetching payout-linked balance transactions.")
+
+        for payout in self._iter_payouts_for_linking(context):
+            payout_id = payout.get("id")
+            if not payout_id:
+                continue
+
+            for transaction in self._iter_balance_transactions_for_payout(payout_id):
+                transaction_id = transaction.get("id")
+                if transaction_id and transaction_id in seen_ids:
+                    continue
+
+                if transaction_id:
+                    seen_ids.add(transaction_id)
+
+                if not transaction.get("payout"):
+                    transaction["payout"] = payout_id
+
+                yield transaction
+
+    def _iter_payouts_for_linking(
+        self, context: Optional[dict], limit: int = DEFAULT_STRIPE_PAGE_LIMIT
+    ) -> Iterable[dict]:
+        """Return payout objects to backfill payout-linked transactions."""
+
+        for start, end in self._make_time_chunks(context):
+            params = {
+                "created": {"gte": start, "lte": end},
+                "limit": limit,
+                "expand": ["data.destination"],
+            }
+            iterator = stripe.Payout.list(**params)
+            for payout in iterator.auto_paging_iter():
+                yield payout.to_dict()
+
+    def _iter_balance_transactions_for_payout(
+        self, payout_id: str, limit: int = DEFAULT_STRIPE_PAGE_LIMIT
+    ) -> Iterable[dict]:
+        """Return balance transactions filtered by payout."""
+
+        iterator = stripe.BalanceTransaction.list(limit=limit, payout=payout_id)
+        for transaction in iterator.auto_paging_iter():
+            yield transaction.to_dict()
+
 
 class ChargesStream(StripeStream):
     """Stripe Plans stream"""
@@ -255,9 +317,17 @@ class PayoutsStream(StripeStream):
     """Stripe Plans stream"""
 
     name = "payouts"
+    is_immutable = True
     primary_keys = ["id"]
     replication_key = "created"
     schema_filepath = SCHEMAS_DIR / "payouts.schema.json"
+
+    def _get_iterator(
+        self, start_epoch: int, end_epoch: int, limit: int = DEFAULT_STRIPE_PAGE_LIMIT
+    ):
+        params = self._make_params(start_epoch, end_epoch, limit=limit)
+        params["expand"] = ["data.destination"]
+        return self.sdk_object.list(**params)
 
 
 class PlansStream(StripeStream):
